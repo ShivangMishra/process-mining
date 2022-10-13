@@ -35,6 +35,7 @@ typedef struct
 
 typedef action_t **DF_t; // a directly follows relation over actions
 
+// prints a given trace
 void printTrace(trace_t *tr)
 {
     event_t *evt = tr->head;
@@ -66,7 +67,7 @@ void addEvt(trace_t *tr, event_t *evt)
 
 /* Load all the events and traces-----------------------------------------------------------------*/
 
-trace_t *getTrace(char *str)
+trace_t *loadTrace(char *str)
 {
     trace_t *tr = malloc(sizeof(trace_t *));
     for (int i = 0; str[i]; i++)
@@ -82,6 +83,7 @@ trace_t *getTrace(char *str)
     return tr;
 }
 
+// loads all the tracees from file
 trace_t **initTrcsFromFile(trace_t **trcs, int *trcsCap, char *filename)
 {
     FILE *fp;
@@ -101,7 +103,7 @@ trace_t **initTrcsFromFile(trace_t **trcs, int *trcsCap, char *filename)
             *trcsCap = *trcsCap * 2;
             trcs = realloc(trcs, sizeof(trace_t *) * *trcsCap);
         }
-        trcs[i] = getTrace(line);
+        trcs[i] = loadTrace(line);
         i++;
     }
 
@@ -115,6 +117,7 @@ trace_t **initTrcsFromFile(trace_t **trcs, int *trcsCap, char *filename)
 
 /* Stage 0 -------------------------------------------------------------------------------------*/
 
+// find all the distinct events in the given traces
 action_t *findDistinctEvents(trace_t **trcs, int size, int *nDistEvts)
 {
     int distCap = 2;
@@ -151,10 +154,27 @@ action_t *findDistinctEvents(trace_t **trcs, int size, int *nDistEvts)
             cur = cur->next;
         }
     }
+    for (int step = 0; step < nDist - 1; step++)
+    {
+        int min_idx = step;
+        for (int i = step + 1; i < nDist; i++)
+        {
+            // Select the minimum element in each loop.
+            // if (array[i] < array[min_idx])
+            //     min_idx = i;
+            if (distEvts[i] < distEvts[min_idx])
+                min_idx = i;
+        }
+        // put min at the correct position
+        action_t temp = distEvts[min_idx];
+        distEvts[min_idx] = distEvts[step];
+        distEvts[step] = temp;
+    }
     *nDistEvts = nDist;
     return distEvts;
 }
 
+// counts the total number of events in the given tracecs
 int countEvts(trace_t **trcs, int size)
 {
     int nEvts = 0;
@@ -174,6 +194,10 @@ int countEvts(trace_t **trcs, int size)
     return nEvts;
 }
 
+// calculates the frequencies of all the events in the given traces
+// returns an array of frequencies.
+// The index of frequency in the returned array corresponds to the event's
+// index in lexicographical order
 int *calcEvtFreq(trace_t **trcs, int size, action_t *actns, int nDistEvts)
 {
     int *evtFreqs = malloc(sizeof(int) * nDistEvts);
@@ -203,6 +227,7 @@ int *calcEvtFreq(trace_t **trcs, int size, action_t *actns, int nDistEvts)
     return evtFreqs;
 }
 
+// checks whether two traces are equal
 int equals(trace_t *tr1, trace_t *tr2)
 {
     event_t *evt1 = tr1->head;
@@ -236,6 +261,7 @@ int equals(trace_t *tr1, trace_t *tr2)
     return result;
 }
 
+// counts all the distinct traces in the given traces
 int countDistinctTraces(trace_t **trcs, int size)
 {
     int nDist = 1;
@@ -255,6 +281,10 @@ int countDistinctTraces(trace_t **trcs, int size)
     return nDist;
 }
 
+// calculates the frequencies of the given traces
+//  returns an array of frequencies.
+//  The index of frequency in the returned array corresponds to the trace's
+//  index in lexicographical order
 void calcTrcsFreq(trace_t **trcs, int size)
 {
     for (int i = 0; i < size; i++)
@@ -274,6 +304,7 @@ void calcTrcsFreq(trace_t **trcs, int size)
     }
 }
 
+// returns the trace with the maximum frequency
 trace_t *getMaxFreqTrace(trace_t **trcs, int size)
 {
     trace_t *maxTr = NULL;
@@ -285,6 +316,114 @@ trace_t *getMaxFreqTrace(trace_t **trcs, int size)
         }
     }
     return maxTr;
+}
+
+// Initializes and returns the directly follows matrix
+DF_t initDFMatrix(action_t *distEvts, int nDistEvts, trace_t **trcs, int trSize)
+{
+    DF_t matrix = malloc(sizeof(action_t *) * nDistEvts);
+    for (int r = 0; r < nDistEvts; r++)
+    {
+        matrix[r] = (int *)malloc(nDistEvts * sizeof(action_t));
+        // printf("%d row init\n", r);
+    }
+
+    for (int r = 0; r < nDistEvts; r++)
+    {
+        for (int c = 0; c < nDistEvts; c++)
+        {
+            // printf("%d,%d = %d", r, c, 0);
+            matrix[r][c] = 0;
+            // printf("%d,%d = %d\n", r, c, 0);
+        }
+    }
+
+    int count = 0;
+    for (int i = 0; i < trSize; i++)
+    {
+        event_t *cur = trcs[i]->head;
+        while (1)
+        {
+            if (cur == trcs[i]->foot)
+            {
+                break;
+            }
+
+            for (int evt1Idx = 0; evt1Idx < nDistEvts; evt1Idx++)
+            {
+                for (int evt2Idx = 0; evt2Idx < nDistEvts; evt2Idx++)
+                {
+                    action_t evt1 = distEvts[evt1Idx];
+                    action_t evt2 = distEvts[evt2Idx];
+                    if (cur->actn == evt1 && cur->next->actn == evt2)
+                    {
+                        int row = evt1 - distEvts[0];
+                        int col = evt2 - distEvts[0];
+                        matrix[evt1Idx][evt2Idx]++;
+                    }
+                }
+            }
+            cur = cur->next;
+        }
+    }
+    return matrix;
+}
+
+// support function
+// returns the support for event x and y, internally uses the Directly Follows matrix to retrieve the supports
+// Note that sup function takes events as inputs
+// sup(x, y) is NOT the same as matrix[x][y] as indices of the matrix start from 0 and go up until the number of elements
+int sup(action_t x, action_t y, action_t *distEvts, DF_t matrix)
+{
+    int row = x - distEvts[0];
+    int col = y - distEvts[0];
+    // printf("%c, %c,  %d, %d\n", x, y, row, col);
+    return (int)(matrix[row][col]);
+}
+
+// pd function
+int pd(action_t x, action_t y, action_t *distEvts, DF_t matrix)
+{
+    int supxy = sup(x, y, distEvts, matrix);
+    int supyx = sup(y, x, distEvts, matrix);
+    // printf("just before sup(%c,%c)  = %d", y, x, supyx);
+    int max = supxy > supyx ? supxy : supyx;
+    // printf("max = %d", max);
+    // printf("calculating result");
+    int result = max > 0 ? (100 * abs(supxy - supyx)) / max : 0;
+    // printf("%d result", result);
+    return result;
+}
+
+// weight function
+int w(action_t x, action_t y, action_t *distEvts, DF_t matrix)
+{
+    int pdxy = pd(x, y, distEvts, matrix);
+    int supxy = sup(x, y, distEvts, matrix);
+    int supyx = sup(y, x, distEvts, matrix);
+    int max = supxy > supyx ? supxy : supyx;
+    return abs(50 - pdxy) * max;
+    // w(x, y) = abs(50 − pd(x, y)) × max(sup(x, y), sup(y, x));
+}
+
+// prints the Directly Follows matrix
+void printDFMatrix(DF_t seqMatrix, action_t *distEvts, int nDistEvts)
+{
+    printf("     ");
+    for (int i = 0; i < nDistEvts; i++)
+    {
+        printf("%5c", distEvts[i]);
+    }
+    printf("\n");
+    for (int row = 0; row < nDistEvts; row++)
+    {
+        printf("%5c", distEvts[row]);
+        for (int col = 0; col < nDistEvts; col++)
+        {
+            printf("%5d", seqMatrix[row][col]);
+        }
+        printf("\n");
+    }
 }
 
 /* WHERE IT ALL HAPPENS ------------------------------------------------------*/
@@ -324,6 +463,40 @@ int main(int argc, char *argv[])
 #pragma endregion
 
 #pragma region stage1
+    printf("==STAGE 1============================\n");
+    DF_t seqMatrix = initDFMatrix(distEvts, nDistEvts, trcs, size);
+    printDFMatrix(seqMatrix, distEvts, nDistEvts);
+    action_t x = 0, y = 0;
+    for (int row = 0; row < nDistEvts; row++)
+    {
+        for (int col = 0; col < nDistEvts; col++)
+        {
+            // printf("row = %d, col = %d\n", row, col);
+            if (row == col)
+                continue;
+
+            action_t rowEvt = distEvts[row];
+            action_t colEvt = distEvts[col];
+            if (x == 0 || y == 0)
+            {
+                x = rowEvt;
+                y = colEvt;
+                continue;
+            }
+            if (pd(rowEvt, colEvt, distEvts, seqMatrix) <= 70)
+                continue;
+            int wxy = w(x, y, distEvts, seqMatrix);
+            int wRowCol = w(rowEvt, colEvt, distEvts, seqMatrix);
+            if (wRowCol > wxy)
+            {
+                x = rowEvt;
+                y = colEvt;
+            }
+        }
+    }
+
+    printf("-------------------------------------\n");
+    printf("%d = SEQ(%c,%c)\n", 256, x, y);
 
 #pragma endregion
 }
