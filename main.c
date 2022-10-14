@@ -41,7 +41,10 @@ void printTrace(trace_t *tr)
     event_t *evt = tr->head;
     while (1)
     {
-        printf("%c", evt->actn);
+        if (isalpha(evt->actn))
+            printf("%c", evt->actn);
+        else
+            printf("%d", evt->actn);
         if (evt == tr->foot)
         {
             printf("\n");
@@ -321,10 +324,28 @@ trace_t *getMaxFreqTrace(trace_t **trcs, int size)
 // Initializes and returns the directly follows matrix
 DF_t initDFMatrix(action_t *distEvts, int nDistEvts, trace_t **trcs, int trSize)
 {
-    DF_t matrix = malloc(sizeof(action_t *) * nDistEvts);
+    // printf("initdf ndist = %d", nDistEvts);
+
+    action_t max = distEvts[0],
+             min = distEvts[0];
+
+    for (int i = 0; i < nDistEvts; i++)
+    {
+        if (distEvts[i] > max)
+            max = distEvts[i];
+        if (distEvts[i] < min)
+            min = distEvts[i];
+    }
+    // if (nDistEvts == 4)
+    // {
+    //     printf("\n MAX = %d , MIN = %d", max, min);
+    //     return NULL;
+    // }
+    DF_t matrix = malloc(sizeof(action_t *) * (max + 1 - min));
+
     for (int r = 0; r < nDistEvts; r++)
     {
-        matrix[r] = (int *)malloc(nDistEvts * sizeof(action_t));
+        matrix[distEvts[r] - distEvts[0]] = (int *)malloc((max + 1 - min) * sizeof(action_t));
         // printf("%d row init\n", r);
     }
 
@@ -333,7 +354,7 @@ DF_t initDFMatrix(action_t *distEvts, int nDistEvts, trace_t **trcs, int trSize)
         for (int c = 0; c < nDistEvts; c++)
         {
             // printf("%d,%d = %d", r, c, 0);
-            matrix[r][c] = 0;
+            matrix[distEvts[r] - distEvts[0]][distEvts[c] - distEvts[0]] = 0;
             // printf("%d,%d = %d\n", r, c, 0);
         }
     }
@@ -359,7 +380,7 @@ DF_t initDFMatrix(action_t *distEvts, int nDistEvts, trace_t **trcs, int trSize)
                     {
                         int row = evt1 - distEvts[0];
                         int col = evt2 - distEvts[0];
-                        matrix[evt1Idx][evt2Idx]++;
+                        matrix[row][col]++;
                     }
                 }
             }
@@ -375,6 +396,8 @@ DF_t initDFMatrix(action_t *distEvts, int nDistEvts, trace_t **trcs, int trSize)
 // sup(x, y) is NOT the same as matrix[x][y] as indices of the matrix start from 0 and go up until the number of elements
 int sup(action_t x, action_t y, action_t *distEvts, DF_t matrix)
 {
+    // printf("at 0 %d, ", distEvts[0]);
+    // return 0;
     int row = x - distEvts[0];
     int col = y - distEvts[0];
     // printf("%c, %c,  %d, %d\n", x, y, row, col);
@@ -385,6 +408,7 @@ int sup(action_t x, action_t y, action_t *distEvts, DF_t matrix)
 int pd(action_t x, action_t y, action_t *distEvts, DF_t matrix)
 {
     int supxy = sup(x, y, distEvts, matrix);
+
     int supyx = sup(y, x, distEvts, matrix);
     // printf("just before sup(%c,%c)  = %d", y, x, supyx);
     int max = supxy > supyx ? supxy : supyx;
@@ -412,18 +436,105 @@ void printDFMatrix(DF_t seqMatrix, action_t *distEvts, int nDistEvts)
     printf("     ");
     for (int i = 0; i < nDistEvts; i++)
     {
-        printf("%5c", distEvts[i]);
+        if (isalpha(distEvts[i]))
+            printf("%5c", distEvts[i]);
+        else
+            printf("%5d", distEvts[i]);
     }
     printf("\n");
     for (int row = 0; row < nDistEvts; row++)
     {
-        printf("%5c", distEvts[row]);
+        if (isalpha(distEvts[row]))
+            printf("%5c", distEvts[row]);
+        else
+            printf("%5d", distEvts[row]);
         for (int col = 0; col < nDistEvts; col++)
         {
-            printf("%5d", seqMatrix[row][col]);
+            printf("%5d", seqMatrix[distEvts[row] - distEvts[0]][distEvts[col] - distEvts[0]]);
         }
         printf("\n");
     }
+}
+
+int replacePair(action_t x, action_t y, action_t z, trace_t **trcs, int trSize)
+{
+    int nEvts = 0;
+    for (int i = 0; i < trSize; i++)
+    {
+        event_t *e1 = trcs[i]->head;
+        event_t *e2 = trcs[i]->head->next;
+
+        while (1)
+        {
+            if (e1->actn != x || e2->actn != y)
+            {
+                if (e2 == trcs[i]->foot)
+                    break;
+                e1 = e1->next;
+                e2 = e2->next;
+                // if (i == 0)
+                //     printf("e1 = %d, e2 = %d", e1->actn, e2->actn);
+                // continue;
+            }
+            else
+            {
+                e1->actn = z;
+                if (e2 != trcs[i]->foot)
+                {
+                    e1->next = e2->next;
+                    free(e2);
+                    e2 = e1->next;
+                    nEvts++;
+                }
+                else
+                {
+                    e1->next = 0;
+                    trcs[i]->foot = e1;
+                    nEvts++;
+                    free(e2);
+                    break;
+                }
+            }
+        }
+    }
+    // number of events removed
+    return nEvts;
+}
+
+void getSeq(action_t *outX, action_t *outY, action_t *distEvts, int nDistEvts, DF_t seqMatrix)
+{
+    action_t x = 0, y = 0;
+    for (int row = 0; row < nDistEvts; row++)
+    {
+        for (int col = 0; col < nDistEvts; col++)
+        {
+            // printf("row = %d, col = %d\n", row, col);
+            if (row == col)
+                continue;
+
+            action_t rowEvt = distEvts[row];
+            action_t colEvt = distEvts[col];
+            if (x == 0 || y == 0)
+            {
+                x = rowEvt;
+                y = colEvt;
+                continue;
+            }
+
+            if (pd(rowEvt, colEvt, distEvts, seqMatrix) <= 70)
+                continue;
+
+            int wxy = w(x, y, distEvts, seqMatrix);
+            int wRowCol = w(rowEvt, colEvt, distEvts, seqMatrix);
+            if (wRowCol > wxy)
+            {
+                x = rowEvt;
+                y = colEvt;
+            }
+        }
+    }
+    *outX = x;
+    *outY = y;
 }
 
 /* WHERE IT ALL HAPPENS ------------------------------------------------------*/
@@ -464,39 +575,52 @@ int main(int argc, char *argv[])
 
 #pragma region stage1
     printf("==STAGE 1============================\n");
-    DF_t seqMatrix = initDFMatrix(distEvts, nDistEvts, trcs, size);
-    printDFMatrix(seqMatrix, distEvts, nDistEvts);
-    action_t x = 0, y = 0;
-    for (int row = 0; row < nDistEvts; row++)
+    int nDistEvtsInit = nDistEvts;
+    // DF_t seqMatrix;
+    int code = 256;
+    for (int i = 1; i <= nDistEvtsInit / 2; i++)
     {
-        for (int col = 0; col < nDistEvts; col++)
+        int nDistEvtsi;
+
+        action_t *distEvtsi = findDistinctEvents(trcs, size, &nDistEvtsi);
+
+        int *evtFreqsi = calcEvtFreq(trcs, size, distEvtsi, nDistEvtsi);
+
+        // printf(" i = %d ndist = %d", i, nDistEvtsi);
+
+        DF_t seqMatrix = initDFMatrix(distEvtsi, nDistEvtsi, trcs, size);
+        // if (i == 3)
+        //     break;
+
+        action_t x, y;
+
+        getSeq(&x, &y, distEvtsi, nDistEvtsi, seqMatrix);
+        if (!(isalpha(x) && isalpha(y)))
+            break;
+
+        if (i != 1)
+            printf("=====================================\n");
+        printDFMatrix(seqMatrix, distEvtsi, nDistEvtsi);
+
+        int n = replacePair(x, y, code, trcs, size);
+        free(distEvtsi);
+        free(evtFreqsi);
+
+        distEvtsi = findDistinctEvents(trcs, size, &nDistEvtsi);
+
+        evtFreqsi = calcEvtFreq(trcs, size, distEvtsi, nDistEvtsi);
+        printf("-------------------------------------\n");
+        printf("%d = SEQ(%c,%c)\n", code, x, y);
+        printf("Number of events removed: %d\n", n);
+        for (int i = 0; i < nDistEvtsi; i++)
         {
-            // printf("row = %d, col = %d\n", row, col);
-            if (row == col)
-                continue;
-
-            action_t rowEvt = distEvts[row];
-            action_t colEvt = distEvts[col];
-            if (x == 0 || y == 0)
-            {
-                x = rowEvt;
-                y = colEvt;
-                continue;
-            }
-            if (pd(rowEvt, colEvt, distEvts, seqMatrix) <= 70)
-                continue;
-            int wxy = w(x, y, distEvts, seqMatrix);
-            int wRowCol = w(rowEvt, colEvt, distEvts, seqMatrix);
-            if (wRowCol > wxy)
-            {
-                x = rowEvt;
-                y = colEvt;
-            }
+            if (isalpha(distEvtsi[i]))
+                printf("%c = %d\n", distEvtsi[i], evtFreqsi[i]);
+            else
+                printf("%d = %d\n", distEvtsi[i], evtFreqsi[i]);
         }
+        code++;
     }
-
-    printf("-------------------------------------\n");
-    printf("%d = SEQ(%c,%c)\n", 256, x, y);
 
 #pragma endregion
 }
