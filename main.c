@@ -456,7 +456,23 @@ void printDFMatrix(DF_t seqMatrix, action_t *distEvts, int nDistEvts)
     }
 }
 
-int replacePair(action_t x, action_t y, action_t z, trace_t **trcs, int trSize)
+void replace(action_t x, action_t code, trace_t **trcs, int trSize)
+{
+    for (int i = 0; i < trSize; i++)
+    {
+        event_t *cur = trcs[i]->head;
+        while (1)
+        {
+            if (cur->actn == x)
+                cur->actn = code;
+            if (cur == trcs[i]->foot)
+                break;
+            cur = cur->next;
+        }
+    }
+}
+
+int abstractPair(action_t z, trace_t **trcs, int trSize)
 {
     int nEvts = 0;
     for (int i = 0; i < trSize; i++)
@@ -466,7 +482,7 @@ int replacePair(action_t x, action_t y, action_t z, trace_t **trcs, int trSize)
 
         while (1)
         {
-            if (e1->actn != x || e2->actn != y)
+            if (e1->actn != z || e2->actn != z)
             {
                 if (e2 == trcs[i]->foot)
                     break;
@@ -478,20 +494,32 @@ int replacePair(action_t x, action_t y, action_t z, trace_t **trcs, int trSize)
             }
             else
             {
-                e1->actn = z;
+                // if (x == 'e')
+                // {
+                //     printf("char %d -> %d\t", e1->actn, e2->actn);
+                // }
+                // e1->actn = z;
                 if (e2 != trcs[i]->foot)
                 {
                     e1->next = e2->next;
                     free(e2);
                     e2 = e1->next;
+                    // if (x == 'e')
+                    // {
+                    //     printf("char %d -> %d -> %d\n", e1->actn, e2->actn, e2->next->actn);
+                    // }
                     nEvts++;
                 }
                 else
                 {
-                    e1->next = 0;
+                    e1->next = NULL;
                     trcs[i]->foot = e1;
                     nEvts++;
                     free(e2);
+                    // if (x == 'e')
+                    // {
+                    //     printf("char %d -> %d -> %d\n", e1->actn, e2->actn, e2->next->actn);
+                    // }
                     break;
                 }
             }
@@ -530,6 +558,77 @@ void getSeq(action_t *outX, action_t *outY, action_t *distEvts, int nDistEvts, D
             {
                 x = rowEvt;
                 y = colEvt;
+            }
+        }
+    }
+    *outX = x;
+    *outY = y;
+}
+
+/* Stage 2 ----------------------------------------------------------------------------------s*/
+void get2(action_t *outX, action_t *outY, int *outType, action_t *distEvts, int nDistEvts, DF_t seqMatrix)
+{
+    action_t x = 0, y = 0;
+    int maxWeight = 0;
+    for (int row = 0; row < nDistEvts; row++)
+    {
+        for (int col = 0; col < nDistEvts; col++)
+        {
+            // printf("row = %d, col = %d\n", row, col);
+
+            action_t rowEvt = distEvts[row];
+            action_t colEvt = distEvts[col];
+            if (x == 0 || y == 0)
+            {
+                x = rowEvt;
+                y = colEvt;
+                continue;
+            }
+            if (row == col)
+                continue;
+            int supxy = sup(rowEvt, colEvt, distEvts, seqMatrix);
+            int supyx = sup(colEvt, rowEvt, distEvts, seqMatrix);
+            int max = supxy > supyx ? supxy : supyx;
+
+            // check choice pattern
+            if (max <= nDistEvts / 100)
+            {
+                int weight = nDistEvts * 100;
+                if (weight > maxWeight)
+                {
+                    maxWeight = weight;
+                    x = rowEvt;
+                    y = colEvt;
+                    *outType = 0;
+                }
+            }
+            // check candidate concurrency pattern
+            else if (supxy > 0 && supyx > 0 && pd(rowEvt, colEvt, distEvts, seqMatrix) < 30)
+            {
+
+                int weight = 100 * w(rowEvt, colEvt, distEvts, seqMatrix);
+                if (weight > maxWeight)
+                {
+                    maxWeight = weight;
+                    x = rowEvt;
+                    y = colEvt;
+                    *outType = 1;
+                }
+            }
+            else if (supxy > supyx && pd(rowEvt, colEvt, distEvts, seqMatrix) > 70)
+            {
+                int weight = w(rowEvt, colEvt, distEvts, seqMatrix);
+                if (isalpha(rowEvt) && isalpha(colEvt))
+                {
+                    weight *= 100;
+                }
+                if (weight > maxWeight)
+                {
+                    maxWeight = weight;
+                    x = rowEvt;
+                    y = colEvt;
+                    *outType = 2;
+                }
             }
         }
     }
@@ -602,7 +701,11 @@ int main(int argc, char *argv[])
             printf("=====================================\n");
         printDFMatrix(seqMatrix, distEvtsi, nDistEvtsi);
 
-        int n = replacePair(x, y, code, trcs, size);
+        replace(x, code, trcs, size);
+        replace(y, code, trcs, size);
+        int n = abstractPair(code, trcs, size);
+        for (int i = 0; i < size; i++)
+            printTrace(trcs[i]);
         free(distEvtsi);
         free(evtFreqsi);
 
@@ -621,6 +724,80 @@ int main(int argc, char *argv[])
         }
         code++;
     }
+#pragma endregion
+    // for (int i = 0; i < size; i++)
+    //     printTrace(trcs[i]);
+    // return 0;
+#pragma region stage2
+    printf("==STAGE 2============================\n");
+    for (int i = 1; i <= size / 2; i++)
+    {
+        int nDistEvtsi;
 
+        action_t *distEvtsi = findDistinctEvents(trcs, size, &nDistEvtsi);
+
+        int *evtFreqsi = calcEvtFreq(trcs, size, distEvtsi, nDistEvtsi);
+
+        // printf(" i = %d ndist = %d", i, nDistEvtsi);
+
+        DF_t seqMatrix = initDFMatrix(distEvtsi, nDistEvtsi, trcs, size);
+        action_t x, y;
+        int pType;
+        get2(&x, &y, &pType, distEvtsi, nDistEvtsi, seqMatrix);
+
+        if (i != 1)
+            printf("=====================================\n");
+        printDFMatrix(seqMatrix, distEvtsi, nDistEvtsi);
+
+        printf("-------------------------------------\n");
+        char *typeStr;
+
+        switch (pType)
+        {
+        case 0:
+            typeStr = "CHC";
+            break;
+        case 1:
+            typeStr = "CON";
+            break;
+        case 2:
+            typeStr = "SEQ";
+        }
+        if (isalpha(x))
+        {
+            printf("%d = %s(%c,%c)\n", code, typeStr, x, y);
+        }
+        else
+        {
+            printf("%d = %s(%d,%d)\n", code, typeStr, x, y);
+        }
+        // printf("Number of events removed: %d\n", n);
+
+        replace(x, code, trcs, size);
+        replace(y, code, trcs, size);
+
+        int n = abstractPair(code, trcs, size);
+
+        // for (int i = 0; i < size; i++)
+        //     printTrace(trcs[i]);
+        // break;
+        free(distEvtsi);
+        free(evtFreqsi);
+
+        distEvtsi = findDistinctEvents(trcs, size, &nDistEvtsi);
+        evtFreqsi = calcEvtFreq(trcs, size, distEvtsi, nDistEvtsi);
+
+        printf("Number of events removed: %d\n", n);
+        for (int i = 0; i < nDistEvtsi; i++)
+        {
+            if (isalpha(distEvtsi[i]))
+                printf("%c = %d\n", distEvtsi[i], evtFreqsi[i]);
+            else
+                printf("%d = %d\n", distEvtsi[i], evtFreqsi[i]);
+        }
+        // if (i == 3)
+        //     break;
+        code++;
+    }
 #pragma endregion
 }
